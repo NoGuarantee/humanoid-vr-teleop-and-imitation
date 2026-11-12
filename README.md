@@ -1,57 +1,200 @@
-# FURRY
+# Телеуправление гуманоидом через VR и обучение автономных политик по демонстрациям
 
-Full-body under-controlled robot retargeting, yo.
+Командный исследовательский проект, октябрь 2026. Оператор в шлеме
+**Meta Quest 3** управляет всем телом гуманоида **Unitree G1** с кистями
+Dex3-1 в физической симуляции **MuJoCo**. Симуляция и нейросетевые
+контроллеры работают прямо на шлеме, без компьютера. Записанные демонстрации
+используются для обучения автономной визуальной политики (Diffusion Policy).
 
-FURRY is a student research project on Meta Quest 3 teleoperation and trajectory
-collection for humanoids in MuJoCo. We start from TWIST2, target Unitree G1 with
-Dex3-1 hands, and investigate how far sparse human observations can support
-whole-body motion and dexterous loco-manipulation.
+> Это форк репозитория команды [emb-ai/FURRY](https://github.com/emb-ai/FURRY).
+> Здесь только новое описание; код, данные и история коммитов совпадают с
+> оригиналом. Мой вклад — в разделе [«Моя роль»](#моя-роль).
 
-**Simulation only.** Controller-based and controller-free Quest input are equal
-research tracks. An external RealSense RGB-D camera is optional. Physical-robot
-deployment is outside this project's scope.
+| Захват чашки в VR | Настольный теннис в VR |
+|---|---|
+| ![Оператор берёт чашку руками G1](docs/portfolio/demo-cup.gif) | ![Оператор играет в теннис руками G1](docs/portfolio/demo-tennis.gif) |
 
-## Start Here
+Видео: [итоговый ролик, 1:29](https://github.com/emb-ai/FURRY/blob/main/docs/demo/2026-10-16/furry-final-montage.mp4) ·
+[сравнение восьми контроллеров, 0:26](https://github.com/emb-ai/FURRY/blob/main/docs/demo/2026-10-16/policies-comparison.mp4)
 
-- [Final demo, presentation and policy comparison — 16 October 2026](docs/demo/2026-10-16/README.md)
-- [Knowledge base and reading order](docs/Home.md)
-- [Getting started](docs/Getting-Started.md)
-- [Team setup and Quest updates over Wi-Fi](docs/Quest-WiFi-Deploy.md)
-- [Compressed literature review](docs/Literature-Review.md)
-- [TWIST2 baseline audit](docs/TWIST2-Baseline.md)
-- [Quest training dataset: source, curated clips and mirrors](datasets/quest-virtual-legs-v2/2026-10-08/README.md)
-- [Research roadmap and umbrella issues](https://github.com/emb-ai/FURRY/issues/1)
-- [Contribution workflow](docs/Contributing.md)
-- [GitHub Wiki mirror](https://github.com/emb-ai/FURRY/wiki)
+## Задача
 
-- [Project preservation audit — 21 October 2026](docs/research/project-preservation-20261021/README.md)
+Для обучения гуманоидов нужны демонстрации движений всего тела. Обычно их
+снимают дорогими системами захвата движения (mocap) или костюмами с
+десятками датчиков. Вопрос проекта: **насколько далеко можно уйти с
+разреженными наблюдениями**, которые даёт обычный VR-шлем? Это положение
+головы, контроллеров или кистей рук и оценка позы тела от Meta Body Tracking,
+у которой ноги лишь достраиваются.
 
-## Status
+Что требовалось сделать:
 
-As of 16 October 2026, the
-[standalone Quest 3 / macOS G1 prototype](prototypes/quest_g1/README.md)
-runs native OpenXR, MuJoCo and ONNX control on the headset. Meta body tracking
-passes through C++ GMR; controller wrist targets, passthrough, calibration,
-policy selection, trajectory capture and operator MP4 recording are available.
-TWIST2, HOMIE and SONIC modes and experimental fine-tuned policies are included.
+1. **Телеуправление.** Перенести позу человека на робота с другими
+   пропорциями (ретаргетинг) и удерживать робота в равновесии обученным
+   контроллером всего тела в реальном времени на мобильном процессоре шлема.
+2. **Сбор данных.** Записывать демонстрации задач манипуляции: перенос
+   чашки, подъём двух предметов, Push-T.
+3. **Автономия.** Обучить по этим записям политику, которая решает задачу
+   по изображению с камеры робота без оператора.
+4. **Ноги.** Улучшить отслеживание ног, которое шлем видит хуже всего:
+   внешняя RGB-D камера и дообучение контроллера с подкреплением.
 
-The [final demo package](docs/demo/2026-10-16/README.md) shows tracking, cup,
-Kick-T and tennis, with a Rubik teaser. Published Quest datasets and autonomous
-visual-policy results are available in `datasets/` and the prototype's training
-reports. These demonstrations do not establish general task reliability:
-walking, external-camera leg tracking and arbitrary Rubik sequences remain
-research limitations. Physical-robot deployment remains outside scope.
+Ограничения: только симуляция, реальный робот вне рамок проекта.
 
-`docs/` is authoritative; the Wiki is a manually published mirror. See the
-[publishing procedure](docs/Contributing.md#wiki-publication).
+## Схема решения
 
-## Foundation
+```mermaid
+flowchart LR
+    subgraph Q["Meta Quest 3 (всё на шлеме, C++)"]
+        direction LR
+        BT["Meta Body Tracking<br/>+ контроллеры"] --> GMR["Ретаргетинг GMR<br/>двухэтапная IK"]
+        GMR --> REF["Целевая поза G1"]
+        REF --> LOW["π_low — контроллер тела<br/>TWIST2 / HOMIE / SONIC / DexWeave<br/>ONNX Runtime, 50 Гц"]
+        LOW --> MJ["MuJoCo 1 кГц<br/>G1 + кисти Dex3-1"]
+        MJ --> XR["OpenXR-рендер<br/>+ passthrough"]
+        MJ --> REC["Запись траекторий<br/>и видео оператора"]
+    end
 
-- [TWIST2 paper](https://arxiv.org/abs/2511.02832)
-- [TWIST2 implementation](https://github.com/amazon-far/TWIST2)
-- [FURRY license: Apache-2.0](LICENSE)
+    CAM["RealSense D435i<br/>YOLO11-pose + глубина<br/>привязка по AprilTag"] -. "позы ног" .-> REF
 
-Upstream software, models and datasets have their own licenses. FURRY's license
-does not relicense them. The Quest training snapshot includes four TWIST2
-example-motion replay fixtures with their original MIT notice; see its dataset
-README for provenance.
+    REC --> DS["Датасеты демонстраций<br/>(HDF5, рендер с камеры робота)"]
+    DS --> HIGH["π_high — Diffusion Policy<br/>1D U-Net + ResNet18 (ImageNet)"]
+    HIGH -- "автономный режим:<br/>цели рук, хват, взгляд" --> LOW
+
+    REC --> RL["RL-дообучение π_low<br/>PPO, Isaac Gym / IsaacLab, H100"]
+    RL -- "новые веса ONNX" --> LOW
+```
+
+Двухуровневая архитектура:
+
+- **π_low** — низкоуровневый контроллер тела. Получает целевую позу и выдаёт
+  целевые углы 29 суставов, которые отрабатывает PD-регулятор. Подключено
+  четыре семейства: TWIST2 (трекер движений, обученный RL), HOMIE v2 (NVIDIA
+  GR00T: RL управляет ногами и корпусом, руки идут за ретаргетингом), SONIC
+  (нейросетевой планировщик походки) и DexWeave (собственная реконструкция
+  статьи без авторского кода).
+- **π_high** — высокоуровневая визуальная политика. Смотрит на изображение
+  224×224 с камеры робота и выдаёт ту же команду, что дал бы оператор:
+  35 значений целевых положений трекеров, 2 хвата и поворот камеры. Поэтому
+  данные, собранные человеком, напрямую становятся обучающей выборкой.
+
+## Методы
+
+| Блок | Что использовано |
+|---|---|
+| Рантайм на шлеме | C++, OpenXR, MuJoCo, ONNX Runtime, OpenGL ES, Android NDK. Физика 1 кГц, контроллер 50 Гц в одном потоке CPU |
+| Ретаргетинг | Порт GMR (General Motion Retargeting) с Python на C++: двухэтапная IK, якобианы SE(3), демпфирование Левенберга – Марквардта, box-QP MuJoCo вместо DAQP. Сверен с оригиналом на синтетических данных |
+| Контроллеры тела | TWIST2, HOMIE v2, SONIC VR3; проверка весов по SHA256, переключение из меню в шлеме |
+| RL-дообучение | PPO на данных Quest: дообучение TWIST2, узкая стойка, штраф `lift_follow` за касание пола при поднятой цели стопы. DexWeave: transformer с анатомическими токенами, IsaacLab + RSL-RL, 6 GPU, 24 576 сред, ≈1,2 млрд переходов |
+| Внешняя камера | RealSense D435i → YOLO11s-pose (COCO-17) → 3D по глубине → фильтр One-Euro и ограничения длин костей → перевод в систему координат Quest по маркеру AprilTag 36h11. RTMW3D проверен и отклонён: глубина почти не информативна |
+| Имитационное обучение | Diffusion Policy: 1D U-Net (81M параметров), энкодер ResNet18 (ImageNet), горизонт 16, DDIM 20 шагов, EMA, cosine LR, аугментации crop/color. Для сравнения: ACT, BC-RNN, малый FiLM-денойзер |
+| Оценка | Настольная копия цикла шлема (QuestSim), закрытый контур на новых случайных раскладках, автоматические критерии успеха и падения |
+
+## Результаты
+
+### Автономные визуальные политики (π_high)
+
+| Задача | Данные | Лучшая модель | Успех на новых раскладках |
+|---|---|---|---|
+| Подъём двух предметов (левой и правой рукой одновременно) | 69 демонстраций, 23 192 кадра | U-Net + ResNet18 ImageNet, 50k шагов | **82 / 200 (41 %)**, 0 падений, медиана 11 с (как у оператора) |
+| Перенос чашки на цель | 93 демонстрации | U-Net + ResNet18 ImageNet, 75k шагов | **23 / 50 (46 %)**, 0 падений, медиана 9,6 с |
+
+Что выяснилось по ходу:
+
+- **Предобученный энкодер решает.** Без ImageNet лучшая модель на двух
+  предметах даёт 15,5 %, на чашке 1/54.
+- **Ёмкость важнее длины обучения.** Малый FiLM-денойзер (0,3M параметров)
+  не решил ни одной попытки даже за 100k шагов; стандартный U-Net решает.
+- **Узкое место чашки — захват:** поднятую чашку модель доносит до цели в
+  68 % случаев.
+- На 40–93 демонстрациях после 50–75k шагов начинается переобучение.
+- Политики только по состоянию симулятора (BC-RNN, Diffusion) на чашке
+  дали 0/10, ACT — не более 2/10.
+
+Отчёты: [два предмета](training/quest_bimanual_pi_high/report.md),
+[чашка](training/quest_cup_pi_high/report.md).
+
+### Контроллеры тела (π_low)
+
+Все восемь контроллеров получили одну и ту же запись оператора (20 с,
+повороты вправо). Метрика — средняя ошибка положения и поворота таза
+относительно референса, без подгонки после прогона:
+
+![Сравнение восьми контроллеров](docs/portfolio/policy-comparison.jpg)
+
+| Контроллер | Ошибка XY, см | Ошибка поворота, ° |
+|---|---:|---:|
+| TWIST2, исходный | 52,0 | 13,6 |
+| TWIST2, дообученный на данных Quest | 36,0 | 14,3 |
+| TWIST2, узкая стойка (RL) | 23,2 | 9,5 |
+| SONIC VR3 | 27,3 | 11,9 |
+| HOMIE v2 | 11,3 | 5,3 |
+| **DexWeave, узкая стойка** | **3,9** | **3,2** |
+
+Это один диагностический фрагмент, а не общая оценка качества походки
+([протокол](docs/demo/2026-10-16/policy-comparison.md)).
+
+### Ноги и производительность
+
+- **RL-дообучение по ногам с камеры.** Скольжение опорной стопы ниже на
+  30–50 %, уход корня 0,7–0,8 м вместо 2,6–3,2 м. Штраф `lift_follow`
+  сократил долю времени, когда цель держит стопу поднятой, а робот стоит
+  на полу, с 51 % до 24 %
+  ([v2](training/quest_contact_clearance/camera_v2_report.md),
+  [v3](training/quest_contact_clearance/camera_v3_report.md)).
+- **Производительность на шлеме.** Шаг физики и контроллера — медиана
+  6,47 мс, p95 7,46 мс при бюджете 10 мс; ретаргетинг 0,40 мс. Рендер 72 FPS
+  с passthrough.
+- **Датасеты.** 15 минут принятых движений для обучения контроллеров;
+  34 эпизода с ногами от камеры (35 минут); более 200 демонстраций
+  манипуляции.
+
+### Что не получилось
+
+Устойчивая ходьба по командам из шлема, точное отслеживание ног внешней
+камерой (мешает шум глубины) и сборка кубика Рубика остались открытыми
+задачами. Кубик в итоговом ролике — анонс, а не решённая задача.
+
+## Моя роль
+
+Команда из четырёх человек. Я отвечал за обучение по демонстрациям,
+внешнюю камеру и инфраструктуру обучения:
+
+- **Визуальная политика π_high:** экспорт данных, Diffusion Policy (U-Net,
+  ResNet18 ImageNet), настольная копия цикла шлема QuestSim, оценка в
+  закрытом контуре и автоматические критерии успеха задач. Подъём двух
+  предметов: с 0 % у исходного денойзера до 41 %; перенос чашки: 46 %.
+- **Внешняя камера:** привязка RealSense к системе координат Quest по
+  AprilTag, слияние скелета камеры со скелетом Meta на шлеме (C++),
+  датасеты ног с камеры.
+- **RL-дообучение контроллера TWIST2** по ногам с камеры, штраф за касание
+  пола (`lift_follow`), анализ причин спотыканий.
+- **Инфраструктура:** изолированное окружение для обучения на общем
+  сервере с 8×H100 (Isaac Gym, PhysX).
+
+Основной код: [`prototypes/quest_g1/g1_sim/`](prototypes/quest_g1/g1_sim/),
+[`training/`](training/), [`skeleton/`](skeleton/).
+
+Рантайм на шлеме, порт GMR, интеграцию HOMIE, SONIC и DexWeave делал
+[AnanasClassic](https://github.com/AnanasClassic); базовый скелет камеры и
+часть демонстраций — [Yeetmq](https://github.com/Yeetmq); CI и инструменты —
+[Penchekrak](https://github.com/Penchekrak).
+
+## Структура репозитория
+
+| Папка | Содержимое |
+|---|---|
+| [`prototypes/quest_g1/android/`](prototypes/quest_g1/android/) | Приложение для Quest 3: C++, OpenXR, MuJoCo, ONNX, GMR |
+| [`prototypes/quest_g1/g1_sim/`](prototypes/quest_g1/g1_sim/) | Настольная симуляция, задачи, Diffusion Policy, QuestSim, оценка |
+| [`prototypes/quest_g1/training/`](prototypes/quest_g1/training/), [`training/`](training/) | RL-дообучение контроллеров, DexWeave, обучение π_high, сервер |
+| [`skeleton/`](skeleton/) | Внешняя камера: YOLO-pose, глубина, AprilTag |
+| [`datasets/`](datasets/) | Опубликованные датасеты Quest (Git LFS) |
+| [`docs/`](docs/) | База знаний, обзор литературы, исследовательские отчёты |
+
+Запуск и сборка описаны в [`prototypes/quest_g1/README.md`](prototypes/quest_g1/README.md)
+и [`docs/Getting-Started.md`](docs/Getting-Started.md).
+
+## Основа и лицензия
+
+Проект начинался с [TWIST2](https://arxiv.org/abs/2511.02832)
+([код](https://github.com/amazon-far/TWIST2)). Код проекта распространяется по
+лицензии [Apache-2.0](LICENSE); сторонние модели и данные — по своим лицензиям.
